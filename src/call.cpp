@@ -180,6 +180,37 @@ static std::string find_in_sdp(std::string const &pattern, std::string const &ms
     return msg.substr(begin, end - begin);
 }
 
+static std::string find_in_sdp(std::string const &pattern, std::string const &msg, std::string::size_type pos, std::string::size_type pos2)
+{
+    std::string::size_type begin, end;
+
+    begin = msg.find(pattern, pos);
+    if (begin == std::string::npos || (pos2 != std::string::npos && begin > pos2)) {
+        return "";
+    }
+
+    begin += pattern.size();
+    end = msg.find_first_of(" \r\n", begin);
+    if (end == std::string::npos || begin == end || (pos2 != std::string::npos && end > pos2)) {
+        return "";
+    }
+
+    return msg.substr(begin, end - begin);
+}
+
+static std::vector<std::string::size_type> find_all_pos_in_sdp(std::string const &pattern, std::string const &msg)
+{
+    std::vector<std::string::size_type> result;
+
+    std::string::size_type begin = msg.find(pattern);
+    while (begin != std::string::npos) {
+        result.push_back(begin);
+        begin = msg.find(pattern, begin + pattern.size());
+    }
+
+    return result;
+}
+
 #ifdef PCAPPLAY
 void call::get_remote_media_addr(std::string const &msg)
 {
@@ -217,10 +248,6 @@ void call::get_remote_media_addr(std::string const &msg)
 void call::extract_rtp_remote_addr(const char* msg)
 {
     int ip_ver;
-    int audio_port = 0;
-    int image_port = 0;
-    int video_port = 0;
-
     std::string host = find_in_sdp("c=IN IP4 ", msg);
     if (host.empty()) {
         host = find_in_sdp("c=IN IP6 ", msg);
@@ -232,29 +259,53 @@ void call::extract_rtp_remote_addr(const char* msg)
         ip_ver = 4;
     }
 
-    std::string port = find_in_sdp("m=audio ", msg);
-    if (!port.empty()) {
-        audio_port = ::atoi(port.c_str());
+    std::vector<std::string::size_type> streams = find_all_pos_in_sdp("m=", msg);
+    if (streams.empty()) {
+        ERROR("extract_rtp_remote_addr: no media streams found in SDP message body");
     }
 
-    port = find_in_sdp("m=image ", msg);
-    if (!port.empty()) {
-        image_port = ::atoi(port.c_str());
+    if (streams.size() != rtp_streams_per_call) {
+        ERROR("different number of media streams specified in SDP than expected");
     }
 
-    port = find_in_sdp("m=video ", msg);
-    if (!port.empty()) {
-        video_port = ::atoi(port.c_str());
-    }
+    for(unsigned int i = 0; i < streams.size(); i++) {
+        std::string::size_type begin, next;
 
-    if (audio_port == 0 && image_port == 0 && video_port == 0) {
-        ERROR("extract_rtp_remote_addr: no m=audio, m=image or m=video line found in SDP message body");
-    }
+        begin = streams[i];
+        if (i < streams.size() - 1) {
+            next = streams[i + 1];
+        } else {
+            next = std::string::npos;
+        }
 
-    /* If we get an image_port only, we won't set anything useful.
-     * We cannot use rtpstream for udptl/t38 data because it has
-     * non-linear timing and data size. */
-    rtpstream_set_remote(&rtpstream_callinfo, ip_ver, host.c_str(), audio_port, video_port);
+        int audio_port = 0;
+        int image_port = 0;
+        int video_port = 0;
+
+        std::string port = find_in_sdp("m=audio ", msg, begin, next);
+        if (!port.empty()) {
+            audio_port = ::atoi(port.c_str());
+        }
+
+        port = find_in_sdp("m=image ", msg, begin, next);
+        if (!port.empty()) {
+            image_port = ::atoi(port.c_str());
+        }
+
+        port = find_in_sdp("m=video ", msg, begin, next);
+        if (!port.empty()) {
+            video_port = ::atoi(port.c_str());
+        }
+
+        if (audio_port == 0 && image_port == 0 && video_port == 0) {
+            ERROR("extract_rtp_remote_addr: no m=audio, m=image or m=video line found in SDP message body");
+        }
+
+        /* If we get an image_port only, we won't set anything useful.
+         * We cannot use rtpstream for udptl/t38 data because it has
+         * non-linear timing and data size. */
+        rtpstream_set_remote(&rtpstream_callinfos[i], ip_ver, host.c_str(), audio_port, video_port);
+    }
 }
 
 /******* Very simple hash for retransmission detection  *******/
@@ -408,7 +459,10 @@ void call::init(scenario * call_scenario, SIPpSocket *socket, struct sockaddr_st
     next_nonce_count = 1;
 
     /* check and warn on rtpstream_new_call result? -> error alloc'ing mem */
-    rtpstream_new_call(&rtpstream_callinfo);
+    rtpstream_callinfos = new rtpstream_callinfo_t[rtp_streams_per_call];
+    for (unsigned int i = 0; i < rtp_streams_per_call; i++) {
+        rtpstream_new_call(&rtpstream_callinfos[i]);
+    }
 
 #ifdef PCAPPLAY
     hasMediaInformation = 0;
@@ -621,7 +675,10 @@ call::~call()
         free(next_req_url);
     }
 
-    rtpstream_end_call(&rtpstream_callinfo);
+    for (unsigned int i = 0; i < rtp_streams_per_call; i++) {
+        rtpstream_end_call(&rtpstream_callinfos[i]);
+    }
+    delete[] rtpstream_callinfos;
 
     if (dialog_authentication) {
         free(dialog_authentication);
@@ -3765,11 +3822,14 @@ call::T_ActionResult call::executeAction(const char* msg, message* curmsg)
         } else if (currentAction->getActionType() == CAction::E_AT_RTP_ECHO) {
             rtp_echo_state = (currentAction->getDoubleValue() != 0);
         } else if (currentAction->getActionType() == CAction::E_AT_RTP_STREAM_PAUSE) {
-            rtpstream_pause(&rtpstream_callinfo);
+            rtpstream_actinfo_t* actioninfo = currentAction->getRTPStreamActInfo();
+            rtpstream_pause(&rtpstream_callinfos[actioninfo->index]);
         } else if (currentAction->getActionType() == CAction::E_AT_RTP_STREAM_RESUME) {
-            rtpstream_resume(&rtpstream_callinfo);
+            rtpstream_actinfo_t* actioninfo = currentAction->getRTPStreamActInfo();
+            rtpstream_resume(&rtpstream_callinfos[actioninfo->index]);
         } else if (currentAction->getActionType() == CAction::E_AT_RTP_STREAM_PLAY) {
-            rtpstream_play(&rtpstream_callinfo, currentAction->getRTPStreamActInfo());
+            rtpstream_actinfo_t* actioninfo = currentAction->getRTPStreamActInfo();
+            rtpstream_play(&rtpstream_callinfos[actioninfo->index], actioninfo);
         } else {
             ERROR("call::executeAction unknown action");
         }

@@ -154,14 +154,15 @@ void CAction::printInfo(char* buf, int len)
         snprintf(buf, len, "Type[%d] - play DTMF digits [%s]", M_action, M_message_str[0]);
 #endif
     } else if (M_action == E_AT_RTP_STREAM_PLAY) {
-        snprintf(buf, len, "Type[%d] - rtp_stream playfile file %s loop=%d payload %d bytes per packet=%d ms per packet=%d ticks per packet=%d",
+        snprintf(buf, len, "Type[%d] - rtp_stream playfile file %s loop=%d payload %d index=%u bytes per packet=%d ms per packet=%d ticks per packet=%d",
                M_action, M_rtpstream_actinfo.filename, M_rtpstream_actinfo.loop_count,
-               M_rtpstream_actinfo.payload_type, M_rtpstream_actinfo.bytes_per_packet,
-               M_rtpstream_actinfo.ms_per_packet, M_rtpstream_actinfo.ticks_per_packet);
+               M_rtpstream_actinfo.payload_type, M_rtpstream_actinfo.index,
+               M_rtpstream_actinfo.bytes_per_packet, M_rtpstream_actinfo.ms_per_packet,
+               M_rtpstream_actinfo.ticks_per_packet);
     } else if (M_action == E_AT_RTP_STREAM_PAUSE) {
-        snprintf(buf, len, "Type[%d] - rtp_stream pause", M_action);
+        snprintf(buf, len, "Type[%d] - rtp_stream pause index=%u", M_action, M_rtpstream_actinfo.index);
     } else if (M_action == E_AT_RTP_STREAM_RESUME) {
-        snprintf(buf, len, "Type[%d] - rtp_stream resume", M_action);
+        snprintf(buf, len, "Type[%d] - rtp_stream resume index=%u", M_action, M_rtpstream_actinfo.index);
     } else {
         snprintf(buf, len, "Type[%d] - unknown action type ... ", M_action);
     }
@@ -519,6 +520,17 @@ void CAction::setRTPStreamActInfo(const char* P_value)
             *(next_comma++)= 0;
         }
         M_rtpstream_actinfo.payload_type= atoi(param_str);
+        param_str = next_comma;
+    }
+
+    M_rtpstream_actinfo.index = 0;
+    if (param_str) {
+        /* we have a index parameter */
+        next_comma = strchr(param_str, ',');
+        if (next_comma) {
+            *(next_comma++) = 0;
+        }
+        M_rtpstream_actinfo.index = atoi(param_str);
     }
 
     /* Setup based on what we know of payload types */
@@ -560,6 +572,11 @@ void CAction::setRTPStreamActInfo(const char* P_value)
     if (rtpstream_cache_file(M_rtpstream_actinfo.filename) < 0) {
         ERROR("Cannot read/cache rtpstream file %s",
               M_rtpstream_actinfo.filename);
+    }
+
+    if (M_rtpstream_actinfo.index >= rtp_streams_per_call) {
+        ERROR("index %u can't be greater than or equal to the number of rtp streams per call %u",
+              M_rtpstream_actinfo.index, rtp_streams_per_call);
     }
 }
 

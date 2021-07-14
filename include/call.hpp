@@ -167,7 +167,7 @@ protected:
     play_args_t play_args_v;
 #endif
 
-    rtpstream_callinfo_t rtpstream_callinfo;
+    rtpstream_callinfo_t* rtpstream_callinfos;
 
     /* holds the auth header and if the challenge was 401 or 407 */
     char         * dialog_authentication;

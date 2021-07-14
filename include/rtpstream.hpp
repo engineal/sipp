@@ -37,6 +37,7 @@ struct rtpstream_actinfo_t
     int ms_per_packet;
     int ticks_per_packet; /* need rework for 11.025 sample rate */
     int payload_type;
+    unsigned int index;
 };
 
 int rtpstream_new_call(rtpstream_callinfo_t *callinfo);

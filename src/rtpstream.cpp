@@ -19,6 +19,8 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/time.h>    /* gettimeofday() */
+#include <sys/utsname.h> /* uname() */
 
 #include "sipp.hpp"
 #include <unistd.h>
@@ -27,6 +29,9 @@
 #include <sys/socket.h>
 #include <pthread.h>
 #include "rtpstream.hpp"
+
+#include <time.h>        /* clock() */
+#include "md5.h"         /* from RFC 1321 */
 
 /* stub to add extra debugging/logging... */
 static void debugprint(const char* format, ...)
@@ -127,8 +132,6 @@ int           num_busy_threads = 0;
 int           num_ready_threads = 0;
 int           busy_threads_max = 0;
 int           ready_threads_max = 0;
-
-unsigned int  global_ssrc_id = 0xCA110000;
 
 //===================================================================================================
 
@@ -483,6 +486,55 @@ static void rtpstream_stop_task(rtpstream_callinfo_t* callinfo)
     }
 }
 
+static u_long md_32(md5_byte_t *string, int length)
+{
+    md5_state_t context;
+    union {
+        char   c[16];
+        u_long x[4];
+    } digest;
+    u_long r;
+    int i;
+
+    md5_init (&context);
+    md5_append (&context, string, length);
+    md5_finish (&context, (md5_byte_t *)&digest);
+    r = 0;
+    for (i = 0; i < 3; i++) {
+        r ^= digest.x[i];
+    }
+    return r;
+}
+
+/*
+ * Return random unsigned 32-bit quantity.  Use 'type' argument if
+ * you need to generate several different values in close succession.
+ */
+uint32_t random32(int type)
+{
+    struct {
+        int     type;
+        struct  timeval tv;
+        clock_t cpu;
+        pid_t   pid;
+        u_long  hid;
+        uid_t   uid;
+        gid_t   gid;
+        struct  utsname name;
+    } s;
+
+    gettimeofday(&s.tv, 0);
+    uname(&s.name);
+    s.type = type;
+    s.cpu  = clock();
+    s.pid  = getpid();
+    s.hid  = gethostid();
+    s.uid  = getuid();
+    s.gid  = getgid();
+
+    return md_32((md5_byte_t *)&s, sizeof(s));
+}
+
 /* code checked */
 int rtpstream_new_call(rtpstream_callinfo_t* callinfo)
 {
@@ -505,7 +557,7 @@ int rtpstream_new_call(rtpstream_callinfo_t* callinfo)
     /* socket descriptors */
     taskinfo->audio_rtp_socket = -1;
     /* rtp stream members */
-    taskinfo->ssrc_id = global_ssrc_id++;
+    taskinfo->ssrc_id = random32(0x5F3759DF);
     /* pthread mutexes */
     pthread_mutex_init(&(callinfo->taskinfo->mutex), NULL);
 

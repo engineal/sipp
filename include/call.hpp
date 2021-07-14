@@ -170,7 +170,7 @@ protected:
 #endif
 
 #ifdef RTP_STREAM
-    rtpstream_callinfo_t rtpstream_callinfo;
+    rtpstream_callinfo_t* rtpstream_callinfos;
 #endif
 
     /* holds the auth header and if the challenge was 401 or 407 */

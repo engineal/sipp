@@ -275,6 +275,7 @@ struct sipp_option options_table[] = {
     {"rtp_payload", "RTP default payload type.", SIPP_OPTION_INT, &rtp_default_payload, 1},
     {"rtp_threadtasks", "RTP number of playback tasks per thread.", SIPP_OPTION_INT, &rtp_tasks_per_thread, 1},
     {"rtp_buffsize", "Set the rtp socket send/receive buffer size.", SIPP_OPTION_INT, &rtp_buffsize, 1},
+    {"rtp_streams", "Number of rtp streams per call. Defaults to 1.", SIPP_OPTION_INT, &rtp_streams_per_call, 1},
 #endif
 
     {"", "Call rate options:", SIPP_HELP_TEXT_HEADER, NULL, 0},
@@ -1886,6 +1887,12 @@ int main(int argc, char *argv[])
 #ifdef USE_TLS
     if ((transport == T_TLS) && (TLS_init_context() != TLS_INIT_NORMAL)) {
         ERROR("FI_init_ssl_context() failed");
+    }
+#endif
+
+#ifdef RTP_STREAM
+    if (rtp_streams_per_call < 1) {
+        ERROR("Must have at least one rtp stream!");
     }
 #endif
 
